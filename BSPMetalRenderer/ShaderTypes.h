@@ -31,7 +31,8 @@ typedef NS_ENUM(EnumBackingType, BufferIndex)
 typedef NS_ENUM(EnumBackingType, VertexAttribute)
 {
     VertexAttributePosition  = 0,
-    VertexAttributeTexcoord  = 1,
+    VertexAttributeColor = 1,
+    VertexAttributeTexcoord  = 2,
 };
 
 typedef NS_ENUM(EnumBackingType, TextureIndex)
@@ -45,5 +46,20 @@ typedef struct
     matrix_float4x4 modelViewMatrix;
 } Uniforms;
 
-#endif /* ShaderTypes_h */
+#ifdef __METAL_VERSION__
+// For Metal, define Vertex with position, color, and texCoord.
+// Adjust the attribute indices as needed by your shader.
+typedef struct {
+    float3 position [[attribute(0)]];
+    float3 color    [[attribute(1)]];
+    float2 texCoord [[attribute(2)]];
+} Vertex;
+#else
+typedef struct {
+    vector_float3 position;
+    vector_float3 color;
+    vector_float2 texCoord;
+} Vertex;
+#endif
 
+#endif /* ShaderTypes_h */

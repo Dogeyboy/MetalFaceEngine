@@ -12,5 +12,5 @@
 
 // Our macOS view controller.
 @interface GameViewController : NSViewController
-
+@property (nonatomic, strong) id<MTKViewDelegate> renderer;
 @end

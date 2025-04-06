@@ -24,21 +24,20 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
     id <MTLCommandQueue> _commandQueue;
 
     id <MTLBuffer> _dynamicUniformBuffer;
+    id <MTLBuffer> _vertexBuffer;
+    NSUInteger _vertexCount;
+    
     id <MTLRenderPipelineState> _pipelineState;
     id <MTLDepthStencilState> _depthState;
     id <MTLTexture> _colorMap;
     MTLVertexDescriptor *_mtlVertexDescriptor;
 
     uint32_t _uniformBufferOffset;
-
     uint8_t _uniformBufferIndex;
-
     void* _uniformBufferAddress;
 
     matrix_float4x4 _projectionMatrix;
-
     float _rotation;
-
     MTKMesh *_mesh;
 }
 
@@ -51,9 +50,54 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
         _inFlightSemaphore = dispatch_semaphore_create(kMaxBuffersInFlight);
         [self _loadMetalWithView:view];
         [self _loadAssets];
+        [self createBSPVertexBuffer];
     }
 
     return self;
+}
+
+- (void)createBSPVertexBuffer
+{
+    Vertex polygonVertices[] = {
+        { .position = { -1.0f, -1.0f, 0.0f }, .color = { 1.0f, 0.0f, 0.0f }, .texCoord = {0.0f, 0.0f} },
+        { .position = {  1.0f, -1.0f, 0.0f }, .color = { 0.0f, 1.0f, 0.0f }, .texCoord = {1.0f, 0.0f} },
+        { .position = {  0.0f,  1.0f, 0.0f }, .color = { 0.0f, 0.0f, 1.0f }, .texCoord = {0.5f, 1.0f} }
+    };
+    
+    // Calculate the number of vertices.
+    _vertexCount = sizeof(polygonVertices) / sizeof(Vertex);
+        
+    // Create the Metal buffer from the vertex data.
+    _vertexBuffer = [_device newBufferWithBytes:polygonVertices
+                                         length:sizeof(Vertex) * _vertexCount
+                                        options:MTLResourceStorageModeShared];
+    if (!_vertexBuffer) {
+        NSLog(@"Vertex buffer creation failed!");
+        return;
+    } else {
+        _vertexBuffer.label = @"BSP Vertex Buffer (Updated)";
+        NSLog(@"Updated BSP vertex buffer with %lu vertices",(unsigned long)_vertexCount);
+    }
+    _vertexBuffer.label = @"BSP Vertex Buffer";
+    
+    NSLog(@"Vertex buffer created successfully, length: %lu", _vertexBuffer.length);
+}
+
+- (void)updateBSPVertexBufferWithVertices:(Vertex * _Nonnull)vertices count:(NSUInteger)count {
+    if (!vertices || count == 0) {
+        NSLog(@"No BSP vertices provided to updateBSPVertexBufferWithVertices. count: %lu", (unsigned long)count);
+        return;
+    }
+    _vertexCount = count;
+    _vertexBuffer = [_device newBufferWithBytes:vertices
+                                         length:sizeof(Vertex) * count
+                                        options:MTLResourceStorageModeShared];
+    if (!_vertexBuffer) {
+        NSLog(@"Failed to create BSP vertex buffer from provided vertices.");
+    } else {
+        _vertexBuffer.label = @"BSP Vertex Buffer (from BSP tree)";
+        NSLog(@"Updated BSP vertex buffer with %lu vertices", (unsigned long)_vertexCount);
+    }
 }
 
 - (void)_loadMetalWithView:(nonnull MTKView *)view;
@@ -67,20 +111,20 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
     _mtlVertexDescriptor = [[MTLVertexDescriptor alloc] init];
 
     _mtlVertexDescriptor.attributes[VertexAttributePosition].format = MTLVertexFormatFloat3;
-    _mtlVertexDescriptor.attributes[VertexAttributePosition].offset = 0;
-    _mtlVertexDescriptor.attributes[VertexAttributePosition].bufferIndex = BufferIndexMeshPositions;
+    _mtlVertexDescriptor.attributes[VertexAttributePosition].offset = offsetof(Vertex, position);
+    _mtlVertexDescriptor.attributes[VertexAttributePosition].bufferIndex = 0;
+
+    _mtlVertexDescriptor.attributes[VertexAttributeColor].format = MTLVertexFormatFloat4;
+    _mtlVertexDescriptor.attributes[VertexAttributeColor].offset = offsetof(Vertex, color);
+    _mtlVertexDescriptor.attributes[VertexAttributeColor].bufferIndex = 0;
 
     _mtlVertexDescriptor.attributes[VertexAttributeTexcoord].format = MTLVertexFormatFloat2;
-    _mtlVertexDescriptor.attributes[VertexAttributeTexcoord].offset = 0;
-    _mtlVertexDescriptor.attributes[VertexAttributeTexcoord].bufferIndex = BufferIndexMeshGenerics;
+    _mtlVertexDescriptor.attributes[VertexAttributeTexcoord].offset = offsetof(Vertex, texCoord);
+    _mtlVertexDescriptor.attributes[VertexAttributeTexcoord].bufferIndex = 0;
 
-    _mtlVertexDescriptor.layouts[BufferIndexMeshPositions].stride = 12;
-    _mtlVertexDescriptor.layouts[BufferIndexMeshPositions].stepRate = 1;
-    _mtlVertexDescriptor.layouts[BufferIndexMeshPositions].stepFunction = MTLVertexStepFunctionPerVertex;
-
-    _mtlVertexDescriptor.layouts[BufferIndexMeshGenerics].stride = 8;
-    _mtlVertexDescriptor.layouts[BufferIndexMeshGenerics].stepRate = 1;
-    _mtlVertexDescriptor.layouts[BufferIndexMeshGenerics].stepFunction = MTLVertexStepFunctionPerVertex;
+    _mtlVertexDescriptor.layouts[0].stride = sizeof(Vertex);
+    _mtlVertexDescriptor.layouts[0].stepRate = 1;
+    _mtlVertexDescriptor.layouts[0].stepFunction = MTLVertexStepFunctionPerVertex;
 
     id<MTLLibrary> defaultLibrary = [_device newDefaultLibrary];
 
@@ -98,11 +142,11 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
     pipelineStateDescriptor.depthAttachmentPixelFormat = view.depthStencilPixelFormat;
     pipelineStateDescriptor.stencilAttachmentPixelFormat = view.depthStencilPixelFormat;
 
-    NSError *error = NULL;
+    NSError *error = nil;
     _pipelineState = [_device newRenderPipelineStateWithDescriptor:pipelineStateDescriptor error:&error];
-    if (!_pipelineState)
-    {
-        NSLog(@"Failed to created pipeline state, error %@", error);
+    if (!_pipelineState) {
+        NSLog(@"Failed to create pipeline state: %@", error);
+        return;
     }
 
     MTLDepthStencilDescriptor *depthStateDesc = [[MTLDepthStencilDescriptor alloc] init];
@@ -191,13 +235,13 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
 
     uniforms->projectionMatrix = _projectionMatrix;
 
-    vector_float3 rotationAxis = {1, 1, 0};
+    vector_float3 rotationAxis = {0, 1, 0};
     matrix_float4x4 modelMatrix = matrix4x4_rotation(_rotation, rotationAxis);
     matrix_float4x4 viewMatrix = matrix4x4_translation(0.0, 0.0, -8.0);
 
     uniforms->modelViewMatrix = matrix_multiply(viewMatrix, modelMatrix);
 
-    _rotation += .01;
+    _rotation += 0.01;
 }
 
 - (void)drawInMTKView:(nonnull MTKView *)view
@@ -234,7 +278,7 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
         [renderEncoder pushDebugGroup:@"DrawBox"];
 
         [renderEncoder setFrontFacingWinding:MTLWindingCounterClockwise];
-        [renderEncoder setCullMode:MTLCullModeBack];
+        [renderEncoder setCullMode:MTLCullModeNone];
         [renderEncoder setRenderPipelineState:_pipelineState];
         [renderEncoder setDepthStencilState:_depthState];
 
@@ -246,6 +290,7 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
                                   offset:_uniformBufferOffset
                                  atIndex:BufferIndexUniforms];
 
+        /*
         for (NSUInteger bufferIndex = 0; bufferIndex < _mesh.vertexBuffers.count; bufferIndex++)
         {
             MTKMeshBuffer *vertexBuffer = _mesh.vertexBuffers[bufferIndex];
@@ -256,10 +301,20 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
                                        atIndex:bufferIndex];
             }
         }
+        */
+        
+        if (_vertexBuffer) {
+            // Set the vertex buffer at a chosen index (for example, index 0, which must match your shader input)
+            [renderEncoder setVertexBuffer:_vertexBuffer offset:0 atIndex:0];
+            NSLog(@"Drawing BSP with %lu vertices", (unsigned long)_vertexCount);
+            // Draw the vertices as triangles
+            [renderEncoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:_vertexCount];
+        }
 
         [renderEncoder setFragmentTexture:_colorMap
                                   atIndex:TextureIndexColor];
 
+        /*
         for(MTKSubmesh *submesh in _mesh.submeshes)
         {
             [renderEncoder drawIndexedPrimitives:submesh.primitiveType
@@ -268,9 +323,9 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
                                      indexBuffer:submesh.indexBuffer.buffer
                                indexBufferOffset:submesh.indexBuffer.offset];
         }
+        */
 
         [renderEncoder popDebugGroup];
-
         [renderEncoder endEncoding];
 
         [commandBuffer presentDrawable:view.currentDrawable];
@@ -327,6 +382,9 @@ matrix_float4x4 matrix_perspective_right_hand(float fovyRadians, float aspect, f
         {  0,   0,         zs, -1 },
         {  0,   0, nearZ * zs,  0 }
     }};
+}
+
+- (void)updateBSPBufferWithVertices:(Vertex * _Nonnull)vertices vertexCount:(NSUInteger)vertexCount {
 }
 
 @end
