@@ -15,14 +15,14 @@
 
 using namespace metal;
 
-// The input structure (from your Vertex buffer)
+// The input structure (from the Vertex buffer)
 struct VertexIn {
     float3 position [[attribute(0)]];
     float4 color    [[attribute(1)]];
     float2 texCoord [[attribute(2)]];
 };
 
-// Your output structure
+// The output structure
 typedef struct
 {
     float4 position [[position]];
@@ -37,7 +37,7 @@ vertex ColorInOut vertexShader(VertexIn in [[stage_in]],
     ColorInOut out;
 
     float4 pos = float4(in.position, 1.0);
-    // Use your model-view-projection matrix here:
+    // Model-view-projection matrix:
     out.position = uniforms.projectionMatrix * uniforms.modelViewMatrix * pos;
     out.color = in.color;
     out.texCoord = in.texCoord;
@@ -48,9 +48,9 @@ fragment float4 fragmentShader(ColorInOut in [[stage_in]],
                                texture2d<float> colorTexture [[texture(0)]],
                                sampler colorSampler [[sampler(0)]])
 {
-    // Sample the texture at the input UV coordinate.
+    // Sample the texture at the input UV coordinate:
     constexpr sampler defaultSampler(filter::linear);
-    // For now, simply output the sampled texture color.
+    // Output the sampled texture color:
     float4 color = colorTexture.sample(colorSampler, in.texCoord);
     return color;
 }
