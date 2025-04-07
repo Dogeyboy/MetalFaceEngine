@@ -14,8 +14,8 @@
             filePath = "BSPMetalRenderer/Renderer.m"
             startingColumnNumber = "9223372036854775807"
             endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "247"
-            endingLineNumber = "247"
+            startingLineNumber = "262"
+            endingLineNumber = "262"
             landmarkName = "-drawInMTKView:"
             landmarkType = "7">
          </BreakpointContent>
