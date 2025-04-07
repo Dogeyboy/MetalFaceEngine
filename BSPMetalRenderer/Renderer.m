@@ -110,18 +110,22 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
 
     _mtlVertexDescriptor = [[MTLVertexDescriptor alloc] init];
 
+    // Position (attribute 0)
     _mtlVertexDescriptor.attributes[VertexAttributePosition].format = MTLVertexFormatFloat3;
     _mtlVertexDescriptor.attributes[VertexAttributePosition].offset = offsetof(Vertex, position);
     _mtlVertexDescriptor.attributes[VertexAttributePosition].bufferIndex = 0;
 
+    // Color (attribute 1) – if you want to pass it along (even if the fragment shader currently ignores it)
     _mtlVertexDescriptor.attributes[VertexAttributeColor].format = MTLVertexFormatFloat4;
     _mtlVertexDescriptor.attributes[VertexAttributeColor].offset = offsetof(Vertex, color);
     _mtlVertexDescriptor.attributes[VertexAttributeColor].bufferIndex = 0;
 
+    // TexCoord (attribute 2)
     _mtlVertexDescriptor.attributes[VertexAttributeTexcoord].format = MTLVertexFormatFloat2;
     _mtlVertexDescriptor.attributes[VertexAttributeTexcoord].offset = offsetof(Vertex, texCoord);
     _mtlVertexDescriptor.attributes[VertexAttributeTexcoord].bufferIndex = 0;
 
+    // Set layout for buffer index 0
     _mtlVertexDescriptor.layouts[0].stride = sizeof(Vertex);
     _mtlVertexDescriptor.layouts[0].stepRate = 1;
     _mtlVertexDescriptor.layouts[0].stepFunction = MTLVertexStepFunctionPerVertex;
