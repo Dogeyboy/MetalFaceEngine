@@ -27,6 +27,8 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
     id <MTLBuffer> _vertexBuffer;
     NSUInteger _vertexCount;
     
+    id<MTLSamplerState> samplerState;
+    
     id <MTLRenderPipelineState> _pipelineState;
     id <MTLDepthStencilState> _depthState;
     id <MTLTexture> _colorMap;
@@ -53,6 +55,15 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
         [self createBSPVertexBuffer];
     }
 
+    MTLSamplerDescriptor *samplerDescriptor = [[MTLSamplerDescriptor alloc] init];
+    samplerDescriptor.minFilter = MTLSamplerMinMagFilterLinear;
+    samplerDescriptor.magFilter = MTLSamplerMinMagFilterLinear;
+    samplerDescriptor.mipFilter = MTLSamplerMipFilterLinear;
+    samplerDescriptor.sAddressMode = MTLSamplerAddressModeClampToEdge;
+    samplerDescriptor.tAddressMode = MTLSamplerAddressModeClampToEdge;
+
+    self->samplerState = [_device newSamplerStateWithDescriptor:samplerDescriptor];
+    
     return self;
 }
 
@@ -172,7 +183,7 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
 {
     /// Load assets into metal objects
 
-    NSError *error;
+    NSError *error = nil;
 
     MTKMeshBufferAllocator *metalAllocator = [[MTKMeshBufferAllocator alloc]
                                               initWithDevice: _device];
@@ -201,14 +212,13 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
     }
 
     MTKTextureLoader* textureLoader = [[MTKTextureLoader alloc] initWithDevice:_device];
-
     NSDictionary *textureLoaderOptions =
     @{
       MTKTextureLoaderOptionTextureUsage       : @(MTLTextureUsageShaderRead),
       MTKTextureLoaderOptionTextureStorageMode : @(MTLStorageModePrivate)
       };
-
-    _colorMap = [textureLoader newTextureWithName:@"ColorMap"
+    
+    _colorMap = [textureLoader newTextureWithName:@"WoodCrate"
                                       scaleFactor:1.0
                                            bundle:nil
                                           options:textureLoaderOptions
@@ -311,6 +321,12 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
             // Set the vertex buffer at a chosen index (for example, index 0, which must match your shader input)
             [renderEncoder setVertexBuffer:_vertexBuffer offset:0 atIndex:0];
             NSLog(@"Drawing BSP with %lu vertices", (unsigned long)_vertexCount);
+            if (_colorMap) {
+                [renderEncoder setFragmentTexture:_colorMap atIndex:0];
+            }
+            if (samplerState) {
+                [renderEncoder setFragmentSamplerState:samplerState atIndex:0];
+            }
             // Draw the vertices as triangles
             [renderEncoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:_vertexCount];
         }

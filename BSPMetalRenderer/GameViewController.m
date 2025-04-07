@@ -191,22 +191,34 @@ static Vertex* flattenBSPTree(BSPNode *node, int *outVertexCount) {
         float r = 255.0f / 255.0f;
         float g = 255.0f / 255.0f;
         float b = 255.0f  / 255.0f;
+        
+        // Determine UVs based on whether this triangle is the first or second triangle of the face.
+        vector_float2 uv[3];
+        if ((i % 2) == 0){
+            // First Triangle
+            uv[0] = (vector_float2){0.0f, 0.0f};
+            uv[1] = (vector_float2){1.0f, 0.0f};
+            uv[2] = (vector_float2){1.0f, 1.0f};
+        } else {
+            // Second Triangle
+            uv[0] = (vector_float2){1.0f, 1.0f};
+            uv[1] = (vector_float2){0.0f, 1.0f};
+            uv[2] = (vector_float2){0.0f, 0.0f};
+        }
 
-        // ✅ Corrected indexing: Print using i * 3
+        //Print using i * 3
         NSLog(@"Triangle %d: %d, %d, %d", i,
               cubeIndices[i * 3],
               cubeIndices[i * 3 + 1],
               cubeIndices[i * 3 + 2]);
 
         for (int j = 0; j < 3; j++) {
-            int vertexIndex = cubeIndices[i * 3 + j]; // ✅ Correct indexing
+            int vertexIndex = cubeIndices[i * 3 + j]; // Use flat indexing into cubeIndices.
             simd_float3 pos = cubeVertices[vertexIndex];
-
-            simd_float2 uv = {0.0f, 0.0f};
             polygons[i].vertices[j] = (Vertex){
                 .position = { pos.x, pos.y, pos.z },
                 .color = { r, g, b },
-                .texCoord = uv
+                .texCoord = uv[j]
             };
         }
     }
