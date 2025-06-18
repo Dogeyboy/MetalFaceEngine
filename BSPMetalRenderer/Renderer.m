@@ -12,6 +12,7 @@
 
 // Include header shared between C code here, which executes Metal API commands, and .metal files
 #import "ShaderTypes.h"
+#import "AssetData.h"
 
 static const NSUInteger kMaxBuffersInFlight = 3;
 
@@ -25,6 +26,7 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
 
     id <MTLBuffer> _dynamicUniformBuffer;
     id <MTLBuffer> _vertexBuffer;
+    id <MTLBuffer> _indexBuffer;
     NSUInteger _vertexCount;
     
     id<MTLSamplerState> samplerState;
@@ -41,6 +43,8 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
     matrix_float4x4 _projectionMatrix;
     float _rotation;
     MTKMesh *_mesh;
+    
+    AssetModel   *_assetModel;
 }
 
 -(nonnull instancetype)initWithMetalKitView:(nonnull MTKView *)view;
@@ -52,7 +56,13 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
         _inFlightSemaphore = dispatch_semaphore_create(kMaxBuffersInFlight);
         [self _loadMetalWithView:view];
         [self _loadAssets];
-        [self createBSPVertexBuffer];
+        _assetModel = loadMFEAsset("Earth.mfeassets");
+        if (_assetModel) {
+            [self _createModelBuffers];
+        }
+        else {
+            NSLog(@"Failed to load asset model");
+        }
     }
 
     MTLSamplerDescriptor *samplerDescriptor = [[MTLSamplerDescriptor alloc] init];
@@ -249,13 +259,45 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
 
     uniforms->projectionMatrix = _projectionMatrix;
 
-    vector_float3 rotationAxis = {0, 1, 0};
+    vector_float3 rotationAxis = {1, 0, 0};
     matrix_float4x4 modelMatrix = matrix4x4_rotation(_rotation, rotationAxis);
     matrix_float4x4 viewMatrix = matrix4x4_translation(0.0, 0.0, -8.0);
 
     uniforms->modelViewMatrix = matrix_multiply(viewMatrix, modelMatrix);
 
     _rotation += 0.01;
+}
+
+- (void)_createModelBuffers {
+    // 1) Vertex buffer
+    _vertexCount = _assetModel->vertexCount;
+    _vertexBuffer = [_device newBufferWithBytes:_assetModel->vertices
+                                        length:sizeof(AssetVertex) * _vertexCount
+                                       options:MTLResourceStorageModeShared];
+    _vertexBuffer.label = @"AssetModel Vertex Buffer";
+
+    // 2) Index buffer
+    _indexBuffer = [_device newBufferWithBytes:_assetModel->indices
+                                       length:sizeof(uint32_t) * _assetModel->indexCount
+                                      options:MTLResourceStorageModeShared];
+    _indexBuffer.label = @"AssetModel Index Buffer";
+
+    // 3) Load texture from name stored in model
+    if (_assetModel->textureName) {
+        NSError *err = nil;
+        MTKTextureLoader *texLoader = [[MTKTextureLoader alloc] initWithDevice:_device];
+        _colorMap = [texLoader newTextureWithName:
+                     [NSString stringWithUTF8String:_assetModel->textureName]
+                                      scaleFactor:1.0
+                                           bundle:nil
+                                          options:@{ MTKTextureLoaderOptionSRGB : @YES }
+                                            error:&err];
+        if (!_colorMap || err) {
+            NSLog(@"⚠️ Texture load failed: %@", err.localizedDescription);
+        } else {
+            _colorMap.label = @"Model Texture";
+        }
+    }
 }
 
 - (void)drawInMTKView:(nonnull MTKView *)view
@@ -319,8 +361,9 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
         
         if (_vertexBuffer) {
             // Set the vertex buffer at a chosen index (for example, index 0, which must match your shader input)
-            [renderEncoder setVertexBuffer:_vertexBuffer offset:0 atIndex:0];
-            NSLog(@"Drawing BSP with %lu vertices", (unsigned long)_vertexCount);
+            [renderEncoder setVertexBuffer:_vertexBuffer
+                                    offset:0
+                                   atIndex:0];
             if (_colorMap) {
                 [renderEncoder setFragmentTexture:_colorMap atIndex:0];
             }
@@ -331,8 +374,11 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
             [renderEncoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:_vertexCount];
         }
 
-        [renderEncoder setFragmentTexture:_colorMap
-                                  atIndex:TextureIndexColor];
+        [renderEncoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
+                                  indexCount:_assetModel->indexCount
+                                   indexType:MTLIndexTypeUInt32
+                                 indexBuffer:_indexBuffer
+                           indexBufferOffset:0];
 
         /*
         for(MTKSubmesh *submesh in _mesh.submeshes)
@@ -407,4 +453,11 @@ matrix_float4x4 matrix_perspective_right_hand(float fovyRadians, float aspect, f
 - (void)updateBSPBufferWithVertices:(Vertex * _Nonnull)vertices vertexCount:(NSUInteger)vertexCount {
 }
 
+- (void)dealloc
+{
+    if (_assetModel) {
+        freeAssetModel(_assetModel);
+        _assetModel = NULL;
+    }
+}
 @end

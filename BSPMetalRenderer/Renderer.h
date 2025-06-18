@@ -7,10 +7,13 @@
 
 #import <MetalKit/MetalKit.h>
 #import "ShaderTypes.h"
+#import "AssetData.h"
 
 // Our platform independent renderer class.   Implements the MTKViewDelegate protocol which
 //   allows it to accept per-frame update and drawable resize callbacks.
-@interface Renderer : NSObject <MTKViewDelegate>
+@interface Renderer : NSObject <MTKViewDelegate> {
+    AssetModel *_assetmodel;
+}
 
 -(nonnull instancetype)initWithMetalKitView:(nonnull MTKView *)view;
 - (void)updateBSPVertexBufferWithVertices:(Vertex * _Nonnull)vertices count:(NSUInteger)count;
