@@ -44,7 +44,6 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
     float _rotation;
     MTKMesh *_mesh;
     
-    AssetModel   *_assetModel;
 }
 
 -(nonnull instancetype)initWithMetalKitView:(nonnull MTKView *)view;
@@ -56,12 +55,38 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
         _inFlightSemaphore = dispatch_semaphore_create(kMaxBuffersInFlight);
         [self _loadMetalWithView:view];
         [self _loadAssets];
-        _assetModel = loadMFEAsset("Earth.mfeassets");
-        if (_assetModel) {
-            [self _createModelBuffers];
-        }
-        else {
-            NSLog(@"Failed to load asset model");
+        NSString *assetPath = [[NSBundle mainBundle] pathForResource:@"Earth"
+                                                         ofType:@"mfeassets"];
+        if (assetPath.length == 0) {
+            NSLog(@"Could not find asset model in bundle");
+        } else {
+            _assetModel = loadMFEAsset(assetPath.UTF8String);
+            if (_assetModel) {
+                NSLog(@"Texture: %s", _assetModel->textureName);
+                for (int i = 0; i < _assetModel->vertexCount; i++) {
+                    printf("v[%d] = (%f, %f, %f)\n", i,
+                    _assetModel->vertices[i].x,
+                    _assetModel->vertices[i].y,
+                    _assetModel->vertices[i].z);
+                }
+                NSUInteger vCount = _assetModel->vertexCount;
+                Vertex *verts = malloc(sizeof(Vertex) * vCount);
+                for (NSUInteger i = 0; i < vCount; i++) {
+                    AssetVertex *av = &_assetModel->vertices[i];
+                    verts[i].position = (vector_float3){ av->x, av->y, av->z };
+                    verts[i].texCoord = (vector_float2){ av->u, av->v };
+                    verts[i].color    = (vector_float4){ av->r, av->g, av->b, av->a };
+                }
+                [self updateModelVertexBufferWithVertices:verts
+                                                    count:vCount
+                                               indexBuffer:_assetModel->indices
+                                                indexCount:_assetModel->indexCount
+                                              textureName:_assetModel->textureName];
+                free(verts);
+            }
+            else {
+                NSLog(@"Failed to load asset model");
+            }
         }
     }
 
@@ -77,48 +102,44 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
     return self;
 }
 
-- (void)createBSPVertexBuffer
+- (id<MTLTexture>)_loadTextureNamed:(NSString*)name
 {
-    Vertex polygonVertices[] = {
-        { .position = { -1.0f, -1.0f, 0.0f }, .color = { 1.0f, 0.0f, 0.0f }, .texCoord = {0.0f, 0.0f} },
-        { .position = {  1.0f, -1.0f, 0.0f }, .color = { 0.0f, 1.0f, 0.0f }, .texCoord = {1.0f, 0.0f} },
-        { .position = {  0.0f,  1.0f, 0.0f }, .color = { 0.0f, 0.0f, 1.0f }, .texCoord = {0.5f, 1.0f} }
-    };
-    
-    // Calculate the number of vertices.
-    _vertexCount = sizeof(polygonVertices) / sizeof(Vertex);
-        
-    // Create the Metal buffer from the vertex data.
-    _vertexBuffer = [_device newBufferWithBytes:polygonVertices
-                                         length:sizeof(Vertex) * _vertexCount
-                                        options:MTLResourceStorageModeShared];
-    if (!_vertexBuffer) {
-        NSLog(@"Vertex buffer creation failed!");
-        return;
-    } else {
-        _vertexBuffer.label = @"BSP Vertex Buffer (Updated)";
-        NSLog(@"Updated BSP vertex buffer with %lu vertices",(unsigned long)_vertexCount);
+    // metalKit loader
+    MTKTextureLoader *loader = [[MTKTextureLoader alloc] initWithDevice:_device];
+    if (name.length == 0) {
+        NSLog(@"[_loadTextureNamed:] called with empty name, skipping texture load.");
+        return nil;
     }
-    _vertexBuffer.label = @"BSP Vertex Buffer";
-    
-    NSLog(@"Vertex buffer created successfully, length: %lu", _vertexBuffer.length);
+    NSError *error = nil;
+    // look in main bundle
+    id<MTLTexture> tex = [loader newTextureWithName:name
+                                         scaleFactor:1.0
+                                              bundle:[NSBundle mainBundle]
+                                             options:@{ MTKTextureLoaderOptionSRGB : @YES }
+                                               error:&error];
+    if (!tex) {
+        NSLog(@"Failed to load texture %@: %@", name, error);
+    }
+    return tex;
 }
 
-- (void)updateBSPVertexBufferWithVertices:(Vertex * _Nonnull)vertices count:(NSUInteger)count {
-    if (!vertices || count == 0) {
-        NSLog(@"No BSP vertices provided to updateBSPVertexBufferWithVertices. count: %lu", (unsigned long)count);
-        return;
-    }
-    _vertexCount = count;
-    _vertexBuffer = [_device newBufferWithBytes:vertices
-                                         length:sizeof(Vertex) * count
-                                        options:MTLResourceStorageModeShared];
-    if (!_vertexBuffer) {
-        NSLog(@"Failed to create BSP vertex buffer from provided vertices.");
-    } else {
-        _vertexBuffer.label = @"BSP Vertex Buffer (from BSP tree)";
-        NSLog(@"Updated BSP vertex buffer with %lu vertices", (unsigned long)_vertexCount);
-    }
+- (void)updateModelVertexBufferWithVertices:(Vertex*)verts
+                                       count:(NSUInteger)vCount
+                                 indexBuffer:(uint32_t*)indices
+                                  indexCount:(NSUInteger)iCount
+                                textureName:(char*)texName
+{
+    _vertexCount = vCount;
+    _vertexBuffer = [_device newBufferWithBytes:verts
+                                       length:sizeof(Vertex)*vCount
+                                      options:MTLResourceStorageModeShared];
+    _indexCount  = iCount;
+    _indexBuffer = [_device newBufferWithBytes:indices
+                                        length:sizeof(uint32_t)*iCount
+                                       options:MTLResourceStorageModeShared];
+    _colorMap = [self _loadTextureNamed:[NSString stringWithUTF8String:texName]];
+    
+    NSLog(@"Loading texture named: %s", texName);
 }
 
 - (void)_loadMetalWithView:(nonnull MTKView *)view;
@@ -286,8 +307,8 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
     if (_assetModel->textureName) {
         NSError *err = nil;
         MTKTextureLoader *texLoader = [[MTKTextureLoader alloc] initWithDevice:_device];
-        _colorMap = [texLoader newTextureWithName:
-                     [NSString stringWithUTF8String:_assetModel->textureName]
+        
+        _colorMap = [texLoader newTextureWithName:[NSString stringWithUTF8String:_assetModel->textureName]
                                       scaleFactor:1.0
                                            bundle:nil
                                           options:@{ MTKTextureLoaderOptionSRGB : @YES }
@@ -358,27 +379,21 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
             }
         }
         */
-        
-        if (_vertexBuffer) {
-            // Set the vertex buffer at a chosen index (for example, index 0, which must match your shader input)
-            [renderEncoder setVertexBuffer:_vertexBuffer
-                                    offset:0
-                                   atIndex:0];
+
+        if (_vertexBuffer && _indexBuffer) {
+            [renderEncoder setVertexBuffer:_vertexBuffer offset:0 atIndex:0];
             if (_colorMap) {
                 [renderEncoder setFragmentTexture:_colorMap atIndex:0];
             }
             if (samplerState) {
                 [renderEncoder setFragmentSamplerState:samplerState atIndex:0];
             }
-            // Draw the vertices as triangles
-            [renderEncoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:_vertexCount];
+            [renderEncoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
+                                      indexCount:_indexCount
+                                       indexType:MTLIndexTypeUInt32
+                                     indexBuffer:_indexBuffer
+                               indexBufferOffset:0];
         }
-
-        [renderEncoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
-                                  indexCount:_assetModel->indexCount
-                                   indexType:MTLIndexTypeUInt32
-                                 indexBuffer:_indexBuffer
-                           indexBufferOffset:0];
 
         /*
         for(MTKSubmesh *submesh in _mesh.submeshes)
@@ -448,9 +463,6 @@ matrix_float4x4 matrix_perspective_right_hand(float fovyRadians, float aspect, f
         {  0,   0,         zs, -1 },
         {  0,   0, nearZ * zs,  0 }
     }};
-}
-
-- (void)updateBSPBufferWithVertices:(Vertex * _Nonnull)vertices vertexCount:(NSUInteger)vertexCount {
 }
 
 - (void)dealloc

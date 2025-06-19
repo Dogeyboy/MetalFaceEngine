@@ -12,9 +12,16 @@
 // Our platform independent renderer class.   Implements the MTKViewDelegate protocol which
 //   allows it to accept per-frame update and drawable resize callbacks.
 @interface Renderer : NSObject <MTKViewDelegate> {
-    AssetModel *_assetmodel;
+    AssetModel *_assetModel;
 }
 
+@property (nonatomic, assign) NSUInteger   indexCount;
+@property (nonatomic, strong) id<MTLBuffer> _Nonnull indexBuffer;
+
 -(nonnull instancetype)initWithMetalKitView:(nonnull MTKView *)view;
-- (void)updateBSPVertexBufferWithVertices:(Vertex * _Nonnull)vertices count:(NSUInteger)count;
+- (void)updateModelVertexBufferWithVertices:(Vertex* _Nonnull)verts
+                                       count:(NSUInteger)vCount
+                                 indexBuffer:(uint32_t* _Nonnull)indices
+                                  indexCount:(NSUInteger)iCount
+                                textureName:(char* _Nonnull)texName;
 @end

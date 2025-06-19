@@ -11,9 +11,11 @@
 #include <stdint.h>
 
 typedef struct {
-    float x, y, z;
-    float u, v;
-}AssetVertex;
+    float x, y, z;       // Position
+    float nx, ny, nz;    // Normal
+    float u, v;          // UV
+    float r, g, b, a;    // Color
+} AssetVertex;
 
 typedef struct {
     uint32_t vertexCount;

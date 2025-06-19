@@ -57,7 +57,7 @@ typedef struct {
 #else
 typedef struct {
     vector_float3 position;
-    vector_float3 color;
+    vector_float4 color;
     vector_float2 texCoord;
 } Vertex;
 #endif
