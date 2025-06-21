@@ -9,6 +9,8 @@
 #import "ShaderTypes.h"
 #import "AssetData.h"
 
+#define MAX_INSTANCES 10
+
 // Our platform independent renderer class.   Implements the MTKViewDelegate protocol which
 //   allows it to accept per-frame update and drawable resize callbacks.
 @interface Renderer : NSObject <MTKViewDelegate> {

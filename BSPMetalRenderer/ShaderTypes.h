@@ -44,6 +44,7 @@ typedef struct
 {
     matrix_float4x4 projectionMatrix;
     matrix_float4x4 modelViewMatrix;
+    matrix_float4x4 modelMatrix;
 } Uniforms;
 
 #ifdef __METAL_VERSION__

@@ -29,6 +29,9 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
     id <MTLBuffer> _indexBuffer;
     NSUInteger _vertexCount;
     
+    matrix_float4x4 _instanceTransforms[MAX_INSTANCES];
+    NSUInteger _instanceCount;
+    
     id<MTLSamplerState> samplerState;
     
     id <MTLRenderPipelineState> _pipelineState;
@@ -62,13 +65,7 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
         } else {
             _assetModel = loadMFEAsset(assetPath.UTF8String);
             if (_assetModel) {
-                NSLog(@"Texture: %s", _assetModel->textureName);
-                for (int i = 0; i < _assetModel->vertexCount; i++) {
-                    printf("v[%d] = (%f, %f, %f)\n", i,
-                    _assetModel->vertices[i].x,
-                    _assetModel->vertices[i].y,
-                    _assetModel->vertices[i].z);
-                }
+                NSLog(@"Loading texture named: %s", _assetModel->textureName);
                 NSUInteger vCount = _assetModel->vertexCount;
                 Vertex *verts = malloc(sizeof(Vertex) * vCount);
                 for (NSUInteger i = 0; i < vCount; i++) {
@@ -83,6 +80,13 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
                                                 indexCount:_assetModel->indexCount
                                               textureName:_assetModel->textureName];
                 free(verts);
+                
+                _instanceCount = 5;
+                _instanceTransforms[0] = matrix4x4_translation(0, 0, -8);
+                _instanceTransforms[1] = matrix_multiply(matrix4x4_translation(-2, 0, -8), matrix4x4_scale(0.5, 0.5, 0.5));
+                _instanceTransforms[2] = matrix4x4_translation(2, 0, -8);
+                _instanceTransforms[3] = matrix4x4_translation(0, 2, -8);
+                _instanceTransforms[4] = matrix4x4_translation(0, -2, -8);
             }
             else {
                 NSLog(@"Failed to load asset model");
@@ -139,7 +143,6 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
                                        options:MTLResourceStorageModeShared];
     _colorMap = [self _loadTextureNamed:[NSString stringWithUTF8String:texName]];
     
-    NSLog(@"Loading texture named: %s", texName);
 }
 
 - (void)_loadMetalWithView:(nonnull MTKView *)view;
@@ -200,7 +203,7 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
     depthStateDesc.depthWriteEnabled = YES;
     _depthState = [_device newDepthStencilStateWithDescriptor:depthStateDesc];
 
-    NSUInteger uniformBufferSize = kAlignedUniformsSize * kMaxBuffersInFlight;
+    NSUInteger uniformBufferSize = kAlignedUniformsSize * kMaxBuffersInFlight * MAX_INSTANCES;
 
     _dynamicUniformBuffer = [_device newBufferWithLength:uniformBufferSize
                                                  options:MTLResourceStorageModeShared];
@@ -272,23 +275,6 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
     _uniformBufferAddress = ((uint8_t*)_dynamicUniformBuffer.contents) + _uniformBufferOffset;
 }
 
-- (void)_updateGameState
-{
-    /// Update any game state before encoding renderint commands to our drawable
-
-    Uniforms * uniforms = (Uniforms*)_uniformBufferAddress;
-
-    uniforms->projectionMatrix = _projectionMatrix;
-
-    vector_float3 rotationAxis = {1, 0, 0};
-    matrix_float4x4 modelMatrix = matrix4x4_rotation(_rotation, rotationAxis);
-    matrix_float4x4 viewMatrix = matrix4x4_translation(0.0, 0.0, -8.0);
-
-    uniforms->modelViewMatrix = matrix_multiply(viewMatrix, modelMatrix);
-
-    _rotation += 0.01;
-}
-
 - (void)_createModelBuffers {
     // 1) Vertex buffer
     _vertexCount = _assetModel->vertexCount;
@@ -338,8 +324,6 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
 
     [self _updateDynamicBufferState];
 
-    [self _updateGameState];
-
     /// Delay getting the currentRenderPassDescriptor until we absolutely need it to avoid
     ///   holding onto the drawable and blocking the display pipeline any longer than necessary
     MTLRenderPassDescriptor* renderPassDescriptor = view.currentRenderPassDescriptor;
@@ -348,6 +332,7 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
 
         /// Final pass rendering code here
 
+        NSUInteger alignedSize = kAlignedUniformsSize;
         id <MTLRenderCommandEncoder> renderEncoder =
         [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
         renderEncoder.label = @"MyRenderEncoder";
@@ -367,44 +352,50 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
                                   offset:_uniformBufferOffset
                                  atIndex:BufferIndexUniforms];
 
-        /*
-        for (NSUInteger bufferIndex = 0; bufferIndex < _mesh.vertexBuffers.count; bufferIndex++)
-        {
-            MTKMeshBuffer *vertexBuffer = _mesh.vertexBuffers[bufferIndex];
-            if((NSNull*)vertexBuffer != [NSNull null])
-            {
-                [renderEncoder setVertexBuffer:vertexBuffer.buffer
-                                        offset:vertexBuffer.offset
-                                       atIndex:bufferIndex];
-            }
-        }
-        */
+        for (NSUInteger i = 0; i < _instanceCount; i++) {
+            // 1) Compute the per-instance offset in the dynamic buffer
+            NSUInteger instanceOffset = _uniformBufferOffset + i * alignedSize;
+            // 2) Write into that slot
+            Uniforms *uPtr = (Uniforms *)((uint8_t*)_dynamicUniformBuffer.contents + instanceOffset);
+            uPtr->projectionMatrix = _projectionMatrix;
+            
+            _rotation += 0.01f;
+            
+            vector_float3 rotationAxis = {1, 0, 0};
+            
+            matrix_float4x4 model = _instanceTransforms[i];
+            matrix_float4x4 rotation = matrix4x4_rotation(_rotation, rotationAxis);
 
-        if (_vertexBuffer && _indexBuffer) {
-            [renderEncoder setVertexBuffer:_vertexBuffer offset:0 atIndex:0];
-            if (_colorMap) {
-                [renderEncoder setFragmentTexture:_colorMap atIndex:0];
-            }
-            if (samplerState) {
-                [renderEncoder setFragmentSamplerState:samplerState atIndex:0];
-            }
+            // Scale, translate, and rotate
+            matrix_float4x4 rotatedModel = matrix_multiply(model, rotation);
+
+            // Apply camera
+            matrix_float4x4 view = matrix4x4_translation(0.0, 0.0, -8.0);
+
+            // apply your per-instance transform AFTER the view
+            uPtr->modelViewMatrix = matrix_multiply(view, rotatedModel);
+            
+            // 3) Bind both vertex and uniforms buffers (at matching indices)
+            [renderEncoder setVertexBuffer:_vertexBuffer
+                                    offset:0
+                                   atIndex:0];
+            [renderEncoder setVertexBuffer:_dynamicUniformBuffer
+                                    offset:instanceOffset
+                                   atIndex:BufferIndexUniforms];
+            [renderEncoder setFragmentBuffer:_dynamicUniformBuffer
+                                      offset:instanceOffset
+                                     atIndex:BufferIndexUniforms];
+            
+            if (_colorMap)    [renderEncoder setFragmentTexture:_colorMap     atIndex:0];
+            if (samplerState) [renderEncoder setFragmentSamplerState:samplerState atIndex:0];
+            
+            // 4) Draw this instance
             [renderEncoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
                                       indexCount:_indexCount
                                        indexType:MTLIndexTypeUInt32
                                      indexBuffer:_indexBuffer
                                indexBufferOffset:0];
         }
-
-        /*
-        for(MTKSubmesh *submesh in _mesh.submeshes)
-        {
-            [renderEncoder drawIndexedPrimitives:submesh.primitiveType
-                                      indexCount:submesh.indexCount
-                                       indexType:submesh.indexType
-                                     indexBuffer:submesh.indexBuffer.buffer
-                               indexBufferOffset:submesh.indexBuffer.offset];
-        }
-        */
 
         [renderEncoder popDebugGroup];
         [renderEncoder endEncoding];
@@ -463,6 +454,16 @@ matrix_float4x4 matrix_perspective_right_hand(float fovyRadians, float aspect, f
         {  0,   0,         zs, -1 },
         {  0,   0, nearZ * zs,  0 }
     }};
+}
+
+matrix_float4x4 matrix4x4_scale(float sx, float sy, float sz)
+{
+return (matrix_float4x4) {{
+{ sx, 0, 0, 0 },
+{ 0, sy, 0, 0 },
+{ 0, 0, sz, 0 },
+{ 0, 0, 0, 1 }
+}};
 }
 
 - (void)dealloc
