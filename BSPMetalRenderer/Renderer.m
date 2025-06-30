@@ -133,10 +133,6 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
 {
     // metalKit loader
     MTKTextureLoader *loader = [[MTKTextureLoader alloc] initWithDevice:_device];
-    if (name.length == 0) {
-        NSLog(@"[_loadTextureNamed:] called with empty name, skipping texture load.");
-        return nil;
-    }
     NSError *error = nil;
     // look in main bundle
     id<MTLTexture> tex = [loader newTextureWithName:name
