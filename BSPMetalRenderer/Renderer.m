@@ -58,38 +58,61 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
         _inFlightSemaphore = dispatch_semaphore_create(kMaxBuffersInFlight);
         [self _loadMetalWithView:view];
         [self _loadAssets];
-        NSString *assetPath = [[NSBundle mainBundle] pathForResource:@"Earth"
-                                                         ofType:@"mfeassets"];
-        if (assetPath.length == 0) {
-            NSLog(@"Could not find asset model in bundle");
+        NSString *resourcePath = [[NSBundle mainBundle] resourcePath];
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSError *error = nil;
+        NSArray<NSString *> *files = [fm contentsOfDirectoryAtPath:resourcePath error:&error];
+
+        if (error) {
+            NSLog(@"Failed to scan bundle: %@", error.localizedDescription);
         } else {
-            _assetModel = loadMFEAsset(assetPath.UTF8String);
-            if (_assetModel) {
-                NSLog(@"Loading texture named: %s", _assetModel->textureName);
-                NSUInteger vCount = _assetModel->vertexCount;
-                Vertex *verts = malloc(sizeof(Vertex) * vCount);
-                for (NSUInteger i = 0; i < vCount; i++) {
-                    AssetVertex *av = &_assetModel->vertices[i];
-                    verts[i].position = (vector_float3){ av->x, av->y, av->z };
-                    verts[i].texCoord = (vector_float2){ av->u, av->v };
-                    verts[i].color    = (vector_float4){ av->r, av->g, av->b, av->a };
+            for (NSString *filename in files) {
+                if ([filename.pathExtension.lowercaseString isEqualToString:@"mfeassets"]) {
+                    NSString *fullPath = [resourcePath stringByAppendingPathComponent:filename];
+                    NSLog(@"Found asset: %@", filename);
+
+                    AssetModel *model = loadMFEAsset(fullPath.UTF8String);
+                    if (!model) {
+                        NSLog(@"Failed to load %@", filename);
+                        continue;
+                    }
+
+                    if (model->textureName) {
+                        NSLog(@"Loaded texture: %@", [NSString stringWithUTF8String:model->textureName]);
+                    } else {
+                        NSLog(@"Model has no texture name");
+                    }
+
+                    _assetModel = model;
+                    
+                    NSUInteger vCount = model->vertexCount;
+                    Vertex *verts = malloc(sizeof(Vertex) * vCount);
+                    for (NSUInteger i = 0; i < vCount; i++) {
+                        AssetVertex *av = &model->vertices[i];
+                        verts[i].position = (vector_float3){ av->x, av->y, av->z };
+                        verts[i].texCoord = (vector_float2){ av->u, av->v };
+                        verts[i].color    = (vector_float4){ av->r, av->g, av->b, av->a };
+                    }
+                    [self updateModelVertexBufferWithVertices:verts
+                                                        count:vCount
+                                                   indexBuffer:model->indices
+                                                    indexCount:model->indexCount
+                                                   textureName:model->textureName];
+                    free(verts);
+
+                    _instanceCount = 5;
+                    _instanceTransforms[0] = matrix4x4_translation(0, 0, -8);
+                    _instanceTransforms[1] = matrix_multiply(matrix4x4_translation(-2, 0, -8), matrix4x4_scale(0.5, 0.5, 0.5));
+                    _instanceTransforms[2] = matrix4x4_translation(2, 0, -8);
+                    _instanceTransforms[3] = matrix4x4_translation(0, 2, -8);
+                    _instanceTransforms[4] = matrix4x4_translation(0, -2, -8);
+
+                    break; // Only use the first found model for now
                 }
-                [self updateModelVertexBufferWithVertices:verts
-                                                    count:vCount
-                                               indexBuffer:_assetModel->indices
-                                                indexCount:_assetModel->indexCount
-                                              textureName:_assetModel->textureName];
-                free(verts);
-                
-                _instanceCount = 5;
-                _instanceTransforms[0] = matrix4x4_translation(0, 0, -8);
-                _instanceTransforms[1] = matrix_multiply(matrix4x4_translation(-2, 0, -8), matrix4x4_scale(0.5, 0.5, 0.5));
-                _instanceTransforms[2] = matrix4x4_translation(2, 0, -8);
-                _instanceTransforms[3] = matrix4x4_translation(0, 2, -8);
-                _instanceTransforms[4] = matrix4x4_translation(0, -2, -8);
             }
-            else {
-                NSLog(@"Failed to load asset model");
+
+            if (!files) {
+                NSLog(@"Could not find asset model from bundle");
             }
         }
     }
