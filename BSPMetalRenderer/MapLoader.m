@@ -81,6 +81,10 @@ MapFile* loadMFEMAP(const char* filepath) {
         mesh->textureName = malloc(texLen + 1);
         fread(mesh->textureName, 1, texLen, f);
         mesh->textureName[texLen] = '\0';
+
+        // Strip file extension in-place (e.g. ".png")
+        char *dot = strrchr(mesh->textureName, '.');
+        if (dot) *dot = '\0';
     }
 
     fclose(f);

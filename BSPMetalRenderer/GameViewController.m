@@ -8,6 +8,7 @@
 #import "GameViewController.h"
 #import "Renderer.h"
 #import "ShaderTypes.h"
+#import "MapData.h"
 
 @implementation GameViewController
 {
@@ -16,6 +17,8 @@
     Renderer *_renderer;
     
     AssetModel *_assetModel;
+    
+    MapFile *_map;
 }
 
 - (void)viewDidLoad
@@ -32,15 +35,13 @@
         return;
     }
 
-    _renderer = [[Renderer alloc] initWithMetalKitView:_view];
-    [_renderer mtkView:_view drawableSizeWillChange:_view.drawableSize];
-    
-    NSString *path = [[NSBundle mainBundle] pathForResource:@"Earth" ofType:@"mfeassets"];
-    _assetModel = loadMFEAsset(path.UTF8String);
-    if (!_assetModel) {
-      NSLog(@"Failed to load asset");
+    NSString *mapPath = [[NSBundle mainBundle] pathForResource:@"SampleMFEMap" ofType:@"mfemap"];
+    _map = loadMFEMAP(mapPath.UTF8String);
+    if (!_map) {
+        NSLog(@"Failed to load map");
     } else {
-      [self updateAssetData];
+        NSLog(@"Loaded map with %u model refs, %u instances, %u meshes",
+              _map->modelCount, _map->instanceCount, _map->meshCount);
     }
 
     _renderer = [[Renderer alloc] initWithMetalKitView:_view mapFile:_map];
@@ -48,6 +49,7 @@
 
     _view.delegate = _renderer;
 }
+
 
 - (void)updateAssetData {
   // flatten your AssetModel into the same Vertex struct you use in Renderer:

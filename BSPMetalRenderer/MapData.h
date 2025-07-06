@@ -32,13 +32,13 @@ typedef struct {
 } MapInstance;
 
 typedef struct {
-    char* skyboxName;         // dynamically allocated
     uint32_t modelCount;
-    char** modelRefs;         // array of dynamically allocated strings
     uint32_t instanceCount;
-    MapInstance* instances;   // array
     uint32_t meshCount;
-    MapMesh* meshes;          // array
+    char* skyboxName;
+    char** modelRefs;
+    MapInstance* instances;
+    MapMesh* meshes;
 } MapFile;
 
 MapFile* loadMFEMAP(const char* filepath);

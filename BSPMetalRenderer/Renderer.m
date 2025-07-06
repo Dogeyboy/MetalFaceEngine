@@ -29,7 +29,14 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
     id <MTLBuffer> _indexBuffer;
     NSUInteger _vertexCount;
     
-    matrix_float4x4 _instanceTransforms[MAX_INSTANCES];
+    AssetModel **_models; // Array of all loaded models
+    NSUInteger _modelCount;
+    
+    ModelRenderData *_modelRenderData;
+    ModelRenderData *_staticMeshes;
+    NSUInteger _staticMeshCount;
+
+    matrix_float4x4 *_instanceMatrices; // Transforms per instance
     NSUInteger _instanceCount;
     
     id<MTLSamplerState> samplerState;
@@ -49,74 +56,118 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
     
 }
 
--(nonnull instancetype)initWithMetalKitView:(nonnull MTKView *)view;
+-(nonnull instancetype)initWithMetalKitView:(nonnull MTKView *)view mapFile:(MapFile *)map;
 {
     self = [super init];
-    if(self)
-    {
+    if (self) {
         _device = view.device;
         _inFlightSemaphore = dispatch_semaphore_create(kMaxBuffersInFlight);
         [self _loadMetalWithView:view];
         [self _loadAssets];
-        NSString *resourcePath = [[NSBundle mainBundle] resourcePath];
-        NSFileManager *fm = [NSFileManager defaultManager];
-        NSError *error = nil;
-        NSArray<NSString *> *files = [fm contentsOfDirectoryAtPath:resourcePath error:&error];
 
-        if (error) {
-            NSLog(@"Failed to scan bundle: %@", error.localizedDescription);
-        } else {
-            for (NSString *filename in files) {
-                if ([filename.pathExtension.lowercaseString isEqualToString:@"mfeassets"]) {
-                    NSString *fullPath = [resourcePath stringByAppendingPathComponent:filename];
-                    NSLog(@"Found asset: %@", filename);
+        _map = map;
 
-                    AssetModel *model = loadMFEAsset(fullPath.UTF8String);
-                    if (!model) {
-                        NSLog(@"Failed to load %@", filename);
-                        continue;
-                    }
+        // === Load models from map->modelRefs[]
+        _modelCount = map->modelCount;
+        _models = malloc(sizeof(AssetModel*) * _modelCount);
+        _modelRenderData = malloc(sizeof(ModelRenderData) * _modelCount);
+        _staticMeshCount = map->meshCount;
+        _staticMeshes = malloc(sizeof(ModelRenderData) * _staticMeshCount);
 
-                    if (model->textureName) {
-                        NSLog(@"Loaded texture: %@", [NSString stringWithUTF8String:model->textureName]);
-                    } else {
-                        NSLog(@"Model has no texture name");
-                    }
+        for (NSUInteger i = 0; i < _staticMeshCount; i++) {
+            MapMesh mesh = map->meshes[i];
 
-                    _assetModel = model;
-                    
-                    NSUInteger vCount = model->vertexCount;
-                    Vertex *verts = malloc(sizeof(Vertex) * vCount);
-                    for (NSUInteger i = 0; i < vCount; i++) {
-                        AssetVertex *av = &model->vertices[i];
-                        verts[i].position = (vector_float3){ av->x, av->y, av->z };
-                        verts[i].texCoord = (vector_float2){ av->u, av->v };
-                        verts[i].color    = (vector_float4){ av->r, av->g, av->b, av->a };
-                    }
-                    [self updateModelVertexBufferWithVertices:verts
-                                                        count:vCount
-                                                   indexBuffer:model->indices
-                                                    indexCount:model->indexCount
-                                                   textureName:model->textureName];
-                    free(verts);
-
-                    _instanceCount = 5;
-                    _instanceTransforms[0] = matrix4x4_translation(0, 0, -8);
-                    _instanceTransforms[1] = matrix_multiply(matrix4x4_translation(-2, 0, -8), matrix4x4_scale(0.5, 0.5, 0.5));
-                    _instanceTransforms[2] = matrix4x4_translation(2, 0, -8);
-                    _instanceTransforms[3] = matrix4x4_translation(0, 2, -8);
-                    _instanceTransforms[4] = matrix4x4_translation(0, -2, -8);
-
-                    break; // Only use the first found model for now
-                }
+            // 1. Convert each MapStaticVertex into Vertex
+            Vertex *verts = malloc(sizeof(Vertex) * mesh.vertexCount);
+            for (NSUInteger j = 0; j < mesh.vertexCount; j++) {
+                MapStaticVertex *mv = &mesh.vertices[j];
+                verts[j].position = (vector_float3){ mv->x, mv->y, mv->z };
+                verts[j].texCoord = (vector_float2){ mv->u, mv->v };
+                verts[j].color    = (vector_float4){ mv->r, mv->g, mv->b, mv->a };
             }
 
-            if (!files) {
-                NSLog(@"Could not find asset model from bundle");
+            // 2. Create Metal buffers
+            id<MTLBuffer> vbuf = [_device newBufferWithBytes:verts
+                                                      length:sizeof(Vertex) * mesh.vertexCount
+                                                     options:MTLResourceStorageModeShared];
+            free(verts);
+
+            id<MTLBuffer> ibuf = [_device newBufferWithBytes:mesh.indices
+                                                      length:sizeof(uint32_t) * mesh.indexCount
+                                                     options:MTLResourceStorageModeShared];
+
+            // 3. Load texture
+            id<MTLTexture> tex = [self _loadTextureNamed:[NSString stringWithUTF8String:mesh.textureName ?: "default"]];
+
+            // 4. Store into _staticMeshes
+            _staticMeshes[i] = (ModelRenderData){
+                .vertexBuffer = vbuf,
+                .indexBuffer  = ibuf,
+                .indexCount   = mesh.indexCount,
+                .texture      = tex
+            };
+        }
+
+        for (NSUInteger i = 0; i < _modelCount; i++) {
+            const char* modelName = map->modelRefs[i];
+            NSString *bundlePath = [[NSBundle mainBundle] pathForResource:[NSString stringWithUTF8String:modelName] ofType:nil];
+            if (!bundlePath) {
+                NSLog(@"Could not find asset file for model: %s", modelName);
+                _models[i] = NULL;
+                continue;
             }
+            AssetModel *model = loadMFEAsset(bundlePath.UTF8String);
+            if (!model) {
+                NSLog(@"Failed to load model asset: %@", bundlePath);
+                _models[i] = NULL;
+                continue;
+            }
+
+            NSLog(@"Loaded model %s (vtx: %u, idx: %u)",
+                  modelName, model->vertexCount, model->indexCount);
+
+            _models[i] = model;
+
+            NSUInteger vCount = model->vertexCount;
+            NSUInteger iCount = model->indexCount;
+
+            // Convert AssetVertex data to Vertex data in order for the vertex buffer to read it properly
+            Vertex *verts = malloc(sizeof(Vertex) * vCount);
+            for (NSUInteger j = 0; j < vCount; j++) {
+                AssetVertex *av = &model->vertices[j];
+                verts[j].position = (vector_float3){ av->x, av->y, av->z };
+                verts[j].texCoord = (vector_float2){ av->u, av->v };
+                verts[j].color = (vector_float4){ av->r, av->g, av->b, av->a };
+            }
+            id<MTLBuffer> vbuf = [_device newBufferWithBytes:verts
+                                                      length:sizeof(Vertex) * vCount
+                                                     options:MTLResourceStorageModeShared];
+            free(verts);
+
+            id<MTLBuffer> ibuf = [_device newBufferWithBytes:model->indices
+                                                      length:sizeof(uint32_t) * iCount
+                                                     options:MTLResourceStorageModeShared];
+
+            id<MTLTexture> tex = [self _loadTextureNamed:[NSString stringWithUTF8String:model->textureName ?: "default"]];
+
+            _modelRenderData[i] = (ModelRenderData){
+                .vertexBuffer = vbuf,
+                .indexBuffer = ibuf,
+                .indexCount = iCount,
+                .texture = tex
+            };
+        }
+
+        // === Cache instance transform matrices
+        _instanceCount = map->instanceCount;
+        _instanceMatrices = malloc(sizeof(matrix_float4x4) * _instanceCount);
+
+        for (NSUInteger i = 0; i < _instanceCount; i++) {
+            memcpy(&_instanceMatrices[i], map->instances[i].transform, sizeof(float) * 16);
         }
     }
 
+    // Sampler state
     MTLSamplerDescriptor *samplerDescriptor = [[MTLSamplerDescriptor alloc] init];
     samplerDescriptor.minFilter = MTLSamplerMinMagFilterLinear;
     samplerDescriptor.magFilter = MTLSamplerMinMagFilterLinear;
@@ -125,7 +176,7 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
     samplerDescriptor.tAddressMode = MTLSamplerAddressModeClampToEdge;
 
     self->samplerState = [_device newSamplerStateWithDescriptor:samplerDescriptor];
-    
+
     return self;
 }
 
@@ -379,42 +430,73 @@ static const size_t kAlignedUniformsSize = (sizeof(Uniforms) & ~0xFF) + 0x100;
             uPtr->projectionMatrix = _projectionMatrix;
             
             _rotation += 0.01f;
-            
-            vector_float3 rotationAxis = {1, 0, 0};
-            
-            matrix_float4x4 model = _instanceTransforms[i];
-            matrix_float4x4 rotation = matrix4x4_rotation(_rotation, rotationAxis);
 
-            // Scale, translate, and rotate
-            matrix_float4x4 rotatedModel = matrix_multiply(model, rotation);
+            // Look up the instance
+            MapInstance inst = _map->instances[i];
+            uint32_t modelIndex = inst.modelIndex;
 
-            // Apply camera
-            matrix_float4x4 view = matrix4x4_translation(0.0, 0.0, -8.0);
+            // Fetch its render data
+            ModelRenderData renderData = _modelRenderData[modelIndex];
 
-            // apply your per-instance transform AFTER the view
-            uPtr->modelViewMatrix = matrix_multiply(view, rotatedModel);
-            
-            // 3) Bind both vertex and uniforms buffers (at matching indices)
-            [renderEncoder setVertexBuffer:_vertexBuffer
-                                    offset:0
-                                   atIndex:0];
-            [renderEncoder setVertexBuffer:_dynamicUniformBuffer
-                                    offset:instanceOffset
-                                   atIndex:BufferIndexUniforms];
-            [renderEncoder setFragmentBuffer:_dynamicUniformBuffer
-                                      offset:instanceOffset
-                                     atIndex:BufferIndexUniforms];
-            
-            if (_colorMap)    [renderEncoder setFragmentTexture:_colorMap     atIndex:0];
-            if (samplerState) [renderEncoder setFragmentSamplerState:samplerState atIndex:0];
-            
-            // 4) Draw this instance
+            // Check validity
+            if (!renderData.indexBuffer || renderData.indexCount == 0) {
+                NSLog(@"Skipping draw for instance %lu: invalid index buffer or empty index count", (unsigned long)i);
+                continue;
+            }
+
+            // Compute uniform buffer offset
+            uPtr->projectionMatrix = _projectionMatrix;
+            uPtr->modelViewMatrix = matrix_multiply(matrix4x4_translation(0.0, 0.0, -8.0),
+                                                    *(matrix_float4x4*)inst.transform);
+
+            // Bind buffers
+            [renderEncoder setVertexBuffer:renderData.vertexBuffer offset:0 atIndex:0];
+            [renderEncoder setVertexBuffer:_dynamicUniformBuffer offset:instanceOffset atIndex:BufferIndexUniforms];
+            [renderEncoder setFragmentBuffer:_dynamicUniformBuffer offset:instanceOffset atIndex:BufferIndexUniforms];
+
+            // Set texture
+            if (renderData.texture) {
+                [renderEncoder setFragmentTexture:renderData.texture atIndex:0];
+            }
+            if (samplerState) {
+                [renderEncoder setFragmentSamplerState:samplerState atIndex:0];
+            }
+
+            // Draw
             [renderEncoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
-                                      indexCount:_indexCount
+                                      indexCount:renderData.indexCount
                                        indexType:MTLIndexTypeUInt32
-                                     indexBuffer:_indexBuffer
+                                     indexBuffer:renderData.indexBuffer
                                indexBufferOffset:0];
         }
+        
+        for (NSUInteger i = 0; i < _staticMeshCount; i++) {
+            ModelRenderData meshData = _staticMeshes[i];
+
+            [renderEncoder setVertexBuffer:meshData.vertexBuffer offset:0 atIndex:0];
+            [renderEncoder setFragmentTexture:meshData.texture atIndex:0];
+            [renderEncoder setFragmentSamplerState:samplerState atIndex:0];
+
+            // Static meshes have no transform for now; use identity
+            matrix_float4x4 model = matrix4x4_translation(0, 0, 0);
+            matrix_float4x4 view  = matrix4x4_translation(0.0, 0.0, -8.0);
+            matrix_float4x4 mv    = matrix_multiply(view, model);
+
+            Uniforms u = {
+                .projectionMatrix = _projectionMatrix,
+                .modelViewMatrix = mv
+            };
+
+            [renderEncoder setVertexBytes:&u length:sizeof(u) atIndex:BufferIndexUniforms];
+            [renderEncoder setFragmentBytes:&u length:sizeof(u) atIndex:BufferIndexUniforms];
+
+            [renderEncoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
+                                      indexCount:meshData.indexCount
+                                       indexType:MTLIndexTypeUInt32
+                                     indexBuffer:meshData.indexBuffer
+                               indexBufferOffset:0];
+        }
+
 
         [renderEncoder popDebugGroup];
         [renderEncoder endEncoding];
