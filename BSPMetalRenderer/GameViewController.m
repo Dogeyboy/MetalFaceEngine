@@ -43,6 +43,9 @@
       [self updateAssetData];
     }
 
+    _renderer = [[Renderer alloc] initWithMetalKitView:_view mapFile:_map];
+    [_renderer mtkView:_view drawableSizeWillChange:_view.drawableSize];
+
     _view.delegate = _renderer;
 }
 

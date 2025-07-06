@@ -48,8 +48,6 @@ fragment float4 fragmentShader(ColorInOut in [[stage_in]],
                                texture2d<float> colorTexture [[texture(0)]],
                                sampler colorSampler [[sampler(0)]])
 {
-    // Sample the texture at the input UV coordinate:
-    constexpr sampler defaultSampler(filter::linear);
     // Output the sampled texture color:
     float4 color = colorTexture.sample(colorSampler, in.texCoord);
     return color;
