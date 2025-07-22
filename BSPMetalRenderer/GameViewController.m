@@ -52,7 +52,7 @@
 
 
 - (void)updateAssetData {
-  // flatten your AssetModel into the same Vertex struct you use in Renderer:
+  // flatten AssetModel Vertices into the same Vertex struct used in Renderer:
   NSUInteger vCount = _assetModel->vertexCount;
   Vertex *verts = malloc(sizeof(Vertex)*vCount);
   for (NSUInteger i = 0; i < vCount; i++) {
@@ -61,7 +61,7 @@
     verts[i].texCoord = (vector_float2){ av->u, av->v };
     verts[i].color    = (vector_float4){ av->r, av->g, av->b, av->a };
   }
-  // now tell the renderer about these buffers:
+  // Tell the renderer about these buffers:
   [_renderer updateModelVertexBufferWithVertices:verts
                                            count:vCount
                                       indexBuffer:_assetModel->indices

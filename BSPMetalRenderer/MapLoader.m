@@ -42,6 +42,8 @@ MapFile* loadMFEMAP(const char* filepath) {
     map->skyboxName = malloc(skyboxNameLen+1);
     fread(map->skyboxName,1,skyboxNameLen,f);
     map->skyboxName[skyboxNameLen]='\0';
+    char *dot = strrchr(map->skyboxName, '.');
+    if (dot) *dot = '\0'; // Strip file extension in-place (e.g. ".png")
     
     // 3. Model Reference Table
     map->modelRefs = malloc(sizeof(char*)*modelCount);
